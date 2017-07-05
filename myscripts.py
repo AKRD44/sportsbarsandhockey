@@ -21,16 +21,24 @@ from sklearn import preprocessing
 
 
 
-def create_stats(old_df,window):
+def create_stats(old_df,window,rolling_mean_shifted=True):
 	df = old_df.copy()
 	for each_col_name in df.columns:
-		df[each_col_name+"RollingMean"]=df[each_col_name].rolling(window=window).mean()
+		#here you're including the latest data in your calculations
+		if rolling_mean_shifted==False:
+			df[each_col_name+"RollingMean"]=df[each_col_name].rolling(window=window).mean()
+		
+		else:
+		#here we assume we do not have the data for time t yet, if we're predicting for time t. If you pick this one, have one extra row to drop
+			df[each_col_name+"RollingMean"]=df[each_col_name].rolling(window=window).mean().shift() #the shift is because I can't use the value at time t+1 if I'm predicting for t+1
+		
 		#df[each_col_name+"DifferencedRollingMean"]=df[each_col_name+"RollingMean"]-df[each_col_name+"RollingMean"].shift()
 		df[each_col_name+"RollingStd"]=df[each_col_name].rolling(window=window).std()
 		df[each_col_name+"RelAvg"]=(df[each_col_name]/df[each_col_name+"RollingMean"])-1
 		df[each_col_name+"RelAvgDifferenced"]=df[each_col_name+"RelAvg"]-df[each_col_name+"RelAvg"].shift()
 		
 		#if you pick this, you gotta drop twice the lenght of windows. Here we've got an average on an average
+		RelAvgRollingMean=True
 		df[each_col_name+"RelAvgRollingMean"]=df[each_col_name+"RelAvg"].rolling(window=window).mean()
 		
 		#df[each_col_name+"RelAvgRollingMeanDifferenced"]=df[each_col_name+"RelAvgRollingMean"]-df[each_col_name+"RelAvgRollingMean"].shift()
@@ -41,8 +49,14 @@ def create_stats(old_df,window):
 		
 		df=df.drop(each_col_name,axis=1)
 	
+	rows_to_drop=window
+	if RelAvgRollingMean==True:
+		rows_to_drop=rows_to_drop*2
+	if rolling_mean_shifted==False:
+		rows_to_drop-=1
+	
 	#df=df.ix[(window)-1:];
-	df=df.ix[(2*window)-1:]; # if RelAvgRollingMean is on, choose this one
+	df=df.ix[rows_to_drop:]; 
 	#df.dropna(inplace=True)
 	df.fillna(0,inplace=True);
 	return df
@@ -101,87 +115,11 @@ def rmse_cv(model,x_train, y_train,cv=5):
 	#then with the - in front, gives you the error, but positive. 
     return(rmse)
 	
-	
-	
-def prep_hockey_data(hockey_data):
-
-	
-	hockey_data.columns=['Away','Home']
-
-	hockey_data["MtlGoals"]=hockey_data.Home
-	hockey_data["OppGoals"]=hockey_data.Home
-
-	#separating the goals from the name
-	away_goals=hockey_data.Away.str.extract('(\d+)').astype(int)
-	home_goals=hockey_data.Home.str.extract('(\d+)').astype(int)
-
-	#this version will cause the 'A value is trying to be set on a copy of a slice from a DataFrame.' problem
-	#hockey_data[hockey_data.Away.str.contains("MTL")]."MtlGoals"=away_goals[hockey_data.Away.str.contains("MTL")].values
-
-	mtl_home=hockey_data.Home.str.contains("MTL")
-	mtl_away=~hockey_data.Home.str.contains("MTL")
-
-	hockey_data.loc[mtl_away,"MtlGoals"]=away_goals[mtl_away].values
-	hockey_data.loc[mtl_home,"MtlGoals"]=home_goals[mtl_home].values
-
-	hockey_data.loc[mtl_home,"OppGoals"]=away_goals[mtl_home].values
-	hockey_data.loc[mtl_away,"OppGoals"]=home_goals[mtl_away].values
-
-	hockey_data.Away=hockey_data.Away.str.replace('\d+', '')
-	hockey_data.Home=hockey_data.Home.str.replace('\d+', '')
-
-	hockey_data["Opp"]=hockey_data.Away
-	hockey_data.loc[mtl_away,"Opp"]=hockey_data.Home[mtl_away].values
-	hockey_data.loc[mtl_home,"Opp"]=hockey_data.Away[mtl_home].values
-
-	#I need these to be numbers because later on I will be summing them up
-
-	hockey_data.loc[mtl_away,"Away"]=1
-	hockey_data.loc[mtl_away,"Home"]=0
-
-	hockey_data.loc[mtl_home,"Away"]=0
-	hockey_data.loc[mtl_home,"Home"]=1
-
-	hockey_data["Win"]=0
-	hockey_data["Tie"]=0
-	hockey_data["Defeat"]=0
-
-
-	wins=hockey_data.MtlGoals>hockey_data.OppGoals
-	ties=hockey_data.MtlGoals==hockey_data.OppGoals
-	losses=hockey_data.MtlGoals<hockey_data.OppGoals
-
-	hockey_data.loc[wins,"Win"]=1
-	hockey_data.loc[ties,"Tie"]=1
-	hockey_data.loc[losses,"Defeat"]=1
-
-	#days of the week
-
-	hockey_data["monday"]=hockey_data.index.dayofweek==0
-	hockey_data["tuesday"]=hockey_data.index.dayofweek==1
-	hockey_data["wednesday"]=hockey_data.index.dayofweek==2
-	hockey_data["thursday"]=hockey_data.index.dayofweek==3
-	hockey_data["friday"]=hockey_data.index.dayofweek==4
-	hockey_data["saturday"]=hockey_data.index.dayofweek==5
-	hockey_data["sunday"]=hockey_data.index.dayofweek==6
-
-	hockey_data.Away=pd.to_numeric(hockey_data.Away);
-	hockey_data.Home=pd.to_numeric(hockey_data.Home);
-	hockey_data.MtlGoals=pd.to_numeric(hockey_data.MtlGoals);
-	hockey_data.OppGoals=pd.to_numeric(hockey_data.OppGoals);
-
-	hockey_data=hockey_data.sort_index()
-
-	monthly_hockey_data=hockey_data.resample("M").sum();
-	monthly_hockey_data=monthly_hockey_data.dropna()
-	return monthly_hockey_data
-
-
 def time_series_info_on_y(y_serie):
 	
 	#lag_plot(pd.DataFrame(y_serie)) #doesn't show properly
 
-	autocorrelation_plot(y_serie)
+	#autocorrelation_plot(y_serie)
 	
 	plot_acf(y_serie, lags=31)
 	plot_pacf(y_serie, lags=31)
@@ -199,39 +137,6 @@ def time_series_heatmap(y_series,lags=12):
 	sns.heatmap(values.corr().abs())	
 	
 
-def ar_predict(train,test):
-	# train autoregression
-	model = AR(train)
-	model_fit = model.fit()
-	window = model_fit.k_ar # here I am saying, by window will be whatever this parameter says
-	coef = model_fit.params
-	print("window is")
-	print(window)
-	print("coefficients are")
-	print(coef)
-	
-	# walk forward over time steps in test
-	history = train[-window:]
-	history = [history[i] for i in range(len(history))]
-	predictions = list()
-	for t in range(len(test)):
-		length = len(history)
-		lag = [history[i] for i in range(length-window,length)]
-		yhat = coef[0]
-		for d in range(window):
-			yhat += coef[d+1] * lag[window-d-1]
-		obs = test[t]
-		predictions.append(yhat)
-		history.append(obs)
-		#print('predicted=%f, expected=%f' % (yhat, obs))
-	error = mean_squared_error(test, predictions)
-	# plot
-	t=test.index
-	print("MEAN SQUARED ERROR OF %.3f"%error)
-	plt.plot(t, test, t, predictions)
-	plt.show()
-	return predictions
-	
 def train_test(train_pct,x=None,y=None):
 	#put in either x or y or both, as long as you identify them. Also put in your training pct, and I'll out the results in dictionary.
 	
